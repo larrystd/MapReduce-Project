@@ -36,12 +36,23 @@ int main(int argc, char* argv[]){
 					<< argv[9] << " " << infile << " "
                                      << argv[11] << " " << outfile << "\n" <<std::endl;
 
+  /// 根据输入的线程数，分成一个vector<string>, 每个线程处理一个string
   std::vector<std::string> sorted_ary = split_input(infile, maps);
+
+
   if(impl.compare("threads") == 0){
+
+    /// 每个线程计算单词的数量, 基于map
+    /// 数据流由sorted_ary交付到thread_data
+    /// thread_data同样表示每个线程需要处理的数据
     map_threads(sorted_ary, maps, thread_data);
     std::cout << "Finished mapping Threads" << std::endl;
+
     //std::cout << thread_data[0].line_array << std::endl;
+  
     std::map<std::string, int> result = reduce_threads(reduces, maps, thread_data);
+    
+    
     if(app.compare("wordcount") == 0){
       wordCountPrint(result, outfile);
     } else { // sort
@@ -94,8 +105,10 @@ void map_threads(std::vector<std::string> array, int maps, ThreadData thread_dat
   for(int i = 0; i < maps; i++){
     //std::cout << "Creating thread: " << std::endl;
     thread_data[i].id = i;
+    ///
     thread_data[i].line_array= array[i];
 
+  /// 执行map的操作
     iret = pthread_create(&threads[i], NULL, map_function_thread, (void*) &thread_data[i]);
     if (iret != 0) {
 			std::cout << "Error: Creating thread: " << iret << std::endl;
@@ -117,29 +130,45 @@ void map_threads(std::vector<std::string> array, int maps, ThreadData thread_dat
 
 }
 
+
+
 std::map<std::string, int> reduce_threads(int reduces, int maps, ThreadData thread_data[]){
   if(maps < reduces) reduces = maps;
   std::map<std::string, int> resultMerged;
   // Each reduce thread will get map_thread ids in order to know which
+  /// mapJobs为每个线程执行的任务vector
   std::vector<std::vector<int>> mapJobs = assignJobs(reduces, maps);
   pthread_t threads[reduces];
 
   int iret;
   ReduceThreadArgs reduceThreadArgs[reduces];
+
+  /// 构造线程执行reduce_function_thread
   for(int i = 0; i < reduces; i++){
 
     std::vector<ThreadData> curData;
+
+    /// mapJobs[i]为线程i需要执行的任务列表
     for(int j = 0 ; j < mapJobs[i].size(); j++){
-	curData.push_back(thread_data[mapJobs[i][j]]);
+      /// 当前线程i需要执行的任务curData
+      /// thread_data还是根据map的线程排序
+	    curData.push_back(thread_data[mapJobs[i][j]]);
     }
+
+    /// 输入数据和结果数据
+    /// 注意thread_data已经切分完, 线程间不冲突
+    /// resultMerged相当于共享数据
     reduceThreadArgs[i].thread_data = curData;
     reduceThreadArgs[i].resultMerged = &resultMerged;
+    /// 执行reduce工作
     iret = pthread_create(&threads[i], NULL, reduce_function_thread, (void*) &reduceThreadArgs[i]);
     if (iret != 0) {
 			std::cout << "Error: Creating thread: " << iret << std::endl;
 			exit(EXIT_FAILURE);
     }
   }
+
+  /// 等待执行完毕
     for (int i = 0; i < reduces; i++) {
 		iret = pthread_join(threads[i], NULL);
 		if (iret) {
@@ -158,10 +187,17 @@ std::map<std::string, int> reduce_threads(int reduces, int maps, ThreadData thre
      return resultMerged;
 
 }
+
+
+/// 进行map的线程交付到reduce的线程
 std::vector<std::vector<int>> assignJobs(int reduces, int maps){
   std::vector<std::vector<int>> result;
+
+  /// 倍数
   int amount = maps / reduces;
+  /// 余数
   int leftOver = maps % reduces;
+  /// counter是加入的id
   int counter = 0;
 
   for(int i = 0; i < reduces; i++){
@@ -188,6 +224,7 @@ void *map_function_thread(void* thread) {
 	std::vector<std::string> words = split_string_by_space(curr_thread_data->line_array);
 	std::map<std::string, int> counterMap;
 
+  /// 计算word的数量
 	for(int i = 0; i < words.size(); i++){
 	  if(counterMap.count(words[i])){
 	    counterMap[words[i]] = counterMap[words[i]] + 1;
@@ -200,9 +237,11 @@ void *map_function_thread(void* thread) {
 	curr_thread_data->counter = counterMap;
 	std::map<std::string, int> testMap = curr_thread_data->counter;
 	for(auto it = testMap.begin(); it != testMap.end(); it++){
-	  //std::cout << it->first << " " << it->second << std::endl;
+	  std::cout << it->first << " " << it->second << std::endl;
 	}
 }
+
+
 
 void *reduce_function_thread(void* thread) {
   struct ReduceThreadArgs *curr_args;
@@ -211,11 +250,13 @@ void *reduce_function_thread(void* thread) {
   std::map<std::string, int> mergeMap;
   std::vector<ThreadData> curData = curr_args->thread_data;
 
+  /// merge线程内部的数据
   for(int i = 0; i < curData.size(); i++){
     std::map<std::string, int> curMap = curData[i].counter;
 
     for(auto it = curMap.begin(); it != curMap.end(); it++){
       if(mergeMap.count(it->first)){
+        /// mergeMap的计算
         mergeMap[it->first] = mergeMap[it->first] + it->second;
       } else {
         mergeMap[it->first] = it->second;
@@ -224,6 +265,8 @@ void *reduce_function_thread(void* thread) {
     }
   }
 
+  /// 多线程融合处理
+  /// merge线程外部的数据,得到resultMerged
   pthread_mutex_lock(&lock1);
   for(auto it = mergeMap.begin(); it != mergeMap.end(); it++){
       if(curr_args->resultMerged->count(it->first)){
@@ -246,11 +289,13 @@ std::vector<std::string> split_input(std::string file, int maps){
   }
 
   std::cout << "Total words: " << word_count << std::endl;
+
+  //// 根据线程的个数进行切分
   std::vector<std::string> ary = map_words_to_array(file, maps, word_count);
   //print for error checking
-  //for (std::vector<std::string>::const_iterator i = ary.begin(); i != ary.end(); i++){
-  //  std::cout << *i << '\n';
-  //}
+  for (std::vector<std::string>::const_iterator i = ary.begin(); i != ary.end(); i++){
+    std::cout << *i << '\n'<<std::endl;
+  }
   //
   return ary;
 }
